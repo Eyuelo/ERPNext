@@ -1,0 +1,162 @@
+# ERPNext: Remove Incorrectly Created Fixed Asset Records
+
+If an Item was incorrectly configured as a **Fixed Asset** instead of a normal **Stock Item**, and an Asset plus depreciation entries were already created, the related records can be cleaned up in reverse dependency order.
+
+> ⚠️ **Warning:** This directly modifies ERPNext database tables. Always take a database backup and test in a staging environment before running it on production.
+
+### Example Item
+
+```text
+SP-001-0151
+```
+
+## SQL Script
+
+```sql
+START TRANSACTION;
+
+-- ============================================================
+-- 1. CANCEL DEPRECIATION JOURNAL ENTRIES
+-- ============================================================
+
+UPDATE `tabJournal Entry`
+SET docstatus = 2
+WHERE voucher_type = 'Depreciation Entry'
+  AND name IN (
+      SELECT DISTINCT gl.voucher_no
+      FROM `tabGL Entry` gl
+      INNER JOIN `tabAsset` a
+          ON gl.against_voucher = a.name
+      WHERE a.item_code = 'SP-001-0151'
+  );
+
+
+-- ============================================================
+-- 2. DELETE RELATED GL ENTRIES
+-- ============================================================
+
+DELETE FROM `tabGL Entry`
+WHERE voucher_no IN (
+    SELECT DISTINCT gl.voucher_no
+    FROM `tabGL Entry` gl
+    INNER JOIN `tabAsset` a
+        ON gl.against_voucher = a.name
+    WHERE a.item_code = 'SP-001-0151'
+);
+
+
+-- ============================================================
+-- 3. DELETE DEPRECIATION JOURNAL ENTRIES
+-- ============================================================
+
+DELETE FROM `tabJournal Entry`
+WHERE voucher_type = 'Depreciation Entry'
+  AND name IN (
+      SELECT DISTINCT gl.voucher_no
+      FROM `tabGL Entry` gl
+      INNER JOIN `tabAsset` a
+          ON gl.against_voucher = a.name
+      WHERE a.item_code = 'SP-001-0151'
+  );
+
+
+-- ============================================================
+-- 4. DELETE ASSET FINANCE BOOK ENTRIES
+-- ============================================================
+-- IMPORTANT:
+-- This must happen BEFORE deleting the Asset records.
+
+DELETE FROM `tabAsset Finance Book`
+WHERE parent IN (
+    SELECT name
+    FROM `tabAsset`
+    WHERE item_code = 'SP-001-0151'
+);
+
+
+-- ============================================================
+-- 5. CANCEL ASSET RECORDS
+-- ============================================================
+
+UPDATE `tabAsset`
+SET docstatus = 2
+WHERE item_code = 'SP-001-0151';
+
+
+-- ============================================================
+-- 6. DELETE ASSET RECORDS
+-- ============================================================
+
+DELETE FROM `tabAsset`
+WHERE item_code = 'SP-001-0151';
+
+
+-- ============================================================
+-- 7. COMMIT CHANGES
+-- ============================================================
+
+COMMIT;
+```
+
+## Recommended Order
+
+The cleanup order is:
+
+```text
+Depreciation Journal Entries
+          ↓
+       GL Entries
+          ↓
+  Asset Finance Book
+          ↓
+        Assets
+```
+
+This order is important because child records should be removed before their parent records.
+
+## Verify Before Running
+
+You can first check the affected records:
+
+```sql
+-- Check Assets
+SELECT name, item_code, docstatus, purchase_date,
+       gross_purchase_amount
+FROM `tabAsset`
+WHERE item_code = 'SP-001-0151';
+
+
+-- Check Asset Finance Book
+SELECT name, parent, finance_book,
+       depreciation_method,
+       total_number_of_depreciations
+FROM `tabAsset Finance Book`
+WHERE parent IN (
+    SELECT name
+    FROM `tabAsset`
+    WHERE item_code = 'SP-001-0151'
+);
+
+
+-- Check GL Entries
+SELECT name, posting_date, account,
+       debit, credit,
+       voucher_type, voucher_no,
+       against_voucher
+FROM `tabGL Entry`
+WHERE against_voucher IN (
+    SELECT name
+    FROM `tabAsset`
+    WHERE item_code = 'SP-001-0151'
+);
+```
+
+## Important
+
+This script handles the **Asset and depreciation accounting records only**.
+
+If a **Purchase Receipt** was already created for the Item, handle the Purchase Receipt separately. Do not automatically delete it just because the Asset was created incorrectly.
+
+After the cleanup, verify that the Item is configured as a normal **Stock Item**, then correct/recreate the Purchase Receipt if required.
+
+> **Best practice:** Use ERPNext's normal Cancel/Amend workflow whenever possible. Direct SQL deletion should generally be used only for controlled data correction with a database backup and a clear understanding of the accounting impact.
