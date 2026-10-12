@@ -1,0 +1,144 @@
+-- ============================================================
+-- ERPNext: Rename Company & Update All References
+-- Old: ABC Company
+-- New: XYZ Company
+-- Old Prefix/Suffix: (auto-detected)
+-- New Prefix/Suffix: XYZ
+-- ============================================================
+
+SET @old_name     = 'ABC Company';
+SET @new_name     = 'XYZ Company';
+SET @old_prefix   = 'ABC';
+SET @new_prefix   = 'XYZ';
+
+-- ============================================================
+-- 1. COMPANY MASTER
+-- ============================================================
+UPDATE `tabCompany`
+SET
+    `name`              = @new_name,
+    `company_name`      = @new_name,
+    `abbr`              = @new_prefix
+WHERE
+    `name`              = @old_name;
+
+-- ============================================================
+-- 2. CHART OF ACCOUNTS — suffix on account_name & name
+--    Pattern:  "Account Name - KGH"  →  "Account Name - OGHA"
+-- ============================================================
+UPDATE `tabAccount`
+SET
+    `name`         = CONCAT(SUBSTRING_INDEX(`name`,         ' - ', 1), ' - ', @new_prefix),
+    `account_name` = CONCAT(SUBSTRING_INDEX(`account_name`, ' - ', 1), ' - ', @new_prefix),
+    `company`      = @new_name
+WHERE
+    `company` = @old_name
+    AND `name` LIKE CONCAT('% - ', @old_prefix);
+
+-- ============================================================
+-- 3. COST CENTERS
+-- ============================================================
+UPDATE `tabCost Center`
+SET
+    `name`             = CONCAT(SUBSTRING_INDEX(`name`,              ' - ', 1), ' - ', @new_prefix),
+    `cost_center_name` = CONCAT(SUBSTRING_INDEX(`cost_center_name`,  ' - ', 1), ' - ', @new_prefix),
+    `company`          = @new_name
+WHERE
+    `company` = @old_name
+    AND `name` LIKE CONCAT('% - ', @old_prefix);
+
+-- ============================================================
+-- 4. WAREHOUSE
+-- ============================================================
+UPDATE `tabWarehouse`
+SET
+    `name`           = CONCAT(SUBSTRING_INDEX(`name`,           ' - ', 1), ' - ', @new_prefix),
+    `warehouse_name` = CONCAT(SUBSTRING_INDEX(`warehouse_name`, ' - ', 1), ' - ', @new_prefix),
+    `company`        = @new_name
+WHERE
+    `company` = @old_name
+    AND `name` LIKE CONCAT('% - ', @old_prefix);
+
+-- ============================================================
+-- 5. LEDGER / GL ENTRIES  (company reference only)
+-- ============================================================
+UPDATE `tabGL Entry`
+SET `company` = @new_name
+WHERE `company` = @old_name;
+
+-- ============================================================
+-- 6. FISCAL YEAR COMPANY LINK
+-- ============================================================
+UPDATE `tabFiscal Year Company`
+SET `company` = @new_name
+WHERE `company` = @old_name;
+
+-- ============================================================
+-- 7. COMMON DOCTYPE COMPANY FIELDS
+--    (Sales Invoice, Purchase Invoice, Journal Entry, Payment,
+--     Stock Entry, Delivery Note, Purchase Receipt, etc.)
+-- ============================================================
+SET @doctypes_with_company = 1; -- marker, actual updates below
+
+UPDATE `tabSales Invoice`          SET `company` = @new_name WHERE `company` = @old_name;
+UPDATE `tabPurchase Invoice`       SET `company` = @new_name WHERE `company` = @old_name;
+UPDATE `tabJournal Entry`          SET `company` = @new_name WHERE `company` = @old_name;
+UPDATE `tabPayment Entry`          SET `company` = @new_name WHERE `company` = @old_name;
+UPDATE `tabStock Entry`            SET `company` = @new_name WHERE `company` = @old_name;
+UPDATE `tabDelivery Note`          SET `company` = @new_name WHERE `company` = @old_name;
+UPDATE `tabPurchase Receipt`       SET `company` = @new_name WHERE `company` = @old_name;
+UPDATE `tabPurchase Order`         SET `company` = @new_name WHERE `company` = @old_name;
+UPDATE `tabSales Order`            SET `company` = @new_name WHERE `company` = @old_name;
+UPDATE `tabQuotation`              SET `company` = @new_name WHERE `company` = @old_name;
+UPDATE `tabSupplier Quotation`     SET `company` = @new_name WHERE `company` = @old_name;
+UPDATE `tabExpense Claim`          SET `company` = @new_name WHERE `company` = @old_name;
+UPDATE `tabSalary Slip`            SET `company` = @new_name WHERE `company` = @old_name;
+UPDATE `tabPayroll Entry`          SET `company` = @new_name WHERE `company` = @old_name;
+UPDATE `tabAsset`                  SET `company` = @new_name WHERE `company` = @old_name;
+UPDATE `tabBudget`                 SET `company` = @new_name WHERE `company` = @old_name;
+UPDATE `tabBank Account`           SET `company` = @new_name WHERE `company` = @old_name;
+
+-- ============================================================
+-- 8. DEFAULT ACCOUNTS ON COMPANY (account field references)
+--    Update account fields that embed the old suffix
+-- ============================================================
+UPDATE `tabCompany`
+SET
+    `default_receivable_account`      = REPLACE(`default_receivable_account`,      CONCAT(' - ', @old_prefix), CONCAT(' - ', @new_prefix)),
+    `default_payable_account`         = REPLACE(`default_payable_account`,         CONCAT(' - ', @old_prefix), CONCAT(' - ', @new_prefix)),
+    `default_expense_account`         = REPLACE(`default_expense_account`,         CONCAT(' - ', @old_prefix), CONCAT(' - ', @new_prefix)),
+    `default_income_account`          = REPLACE(`default_income_account`,          CONCAT(' - ', @old_prefix), CONCAT(' - ', @new_prefix)),
+    `round_off_account`               = REPLACE(`round_off_account`,               CONCAT(' - ', @old_prefix), CONCAT(' - ', @new_prefix)),
+    `write_off_account`               = REPLACE(`write_off_account`,               CONCAT(' - ', @old_prefix), CONCAT(' - ', @new_prefix)),
+    `default_cash_account`            = REPLACE(`default_cash_account`,            CONCAT(' - ', @old_prefix), CONCAT(' - ', @new_prefix)),
+    `default_bank_account`            = REPLACE(`default_bank_account`,            CONCAT(' - ', @old_prefix), CONCAT(' - ', @new_prefix)),
+    `accumulated_depreciation_account`= REPLACE(`accumulated_depreciation_account`,CONCAT(' - ', @old_prefix), CONCAT(' - ', @new_prefix)),
+    `depreciation_expense_account`    = REPLACE(`depreciation_expense_account`,    CONCAT(' - ', @old_prefix), CONCAT(' - ', @new_prefix)),
+    `disposal_account`                = REPLACE(`disposal_account`,                CONCAT(' - ', @old_prefix), CONCAT(' - ', @new_prefix)),
+    `default_cost_center`             = REPLACE(`default_cost_center`,             CONCAT(' - ', @old_prefix), CONCAT(' - ', @new_prefix))
+WHERE `name` = @new_name;   -- already renamed in step 1
+
+-- ============================================================
+-- 9. GL ENTRY account / cost_center suffix
+-- ============================================================
+UPDATE `tabGL Entry`
+SET
+    `account`      = REPLACE(`account`,      CONCAT(' - ', @old_prefix), CONCAT(' - ', @new_prefix)),
+    `cost_center`  = REPLACE(`cost_center`,  CONCAT(' - ', @old_prefix), CONCAT(' - ', @new_prefix)),
+    `against`      = REPLACE(`against`,      CONCAT(' - ', @old_prefix), CONCAT(' - ', @new_prefix))
+WHERE `company` = @new_name;
+
+-- ============================================================
+-- 10. STOCK LEDGER ENTRY — warehouse suffix
+-- ============================================================
+UPDATE `tabStock Ledger Entry`
+SET
+    `warehouse`  = REPLACE(`warehouse`,  CONCAT(' - ', @old_prefix), CONCAT(' - ', @new_prefix)),
+    `company`    = @new_name
+WHERE `company` = @old_name;
+
+-- ============================================================
+-- DONE
+-- ============================================================
+SELECT CONCAT('Renamed: ', @old_name, '  →  ', @new_name) AS Result;
+SELECT CONCAT('Abbreviation: ', @old_prefix, '  →  ', @new_prefix)  AS Result;
